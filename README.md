@@ -202,15 +202,142 @@ root          22  0.0  0.0   5904  2728 pts/0    R+   03:16   0:00 ps -aux
 ```
 En donde vemos el main process, pero tambien vemos los otros procesos que creamos recién.
 
-Para matar ese proceso:
+Para matar ese proceso (y por consiguiente detener el contenedor):
 
 ```sh
 docker inspect -f '{{.State.Pid}}' alwaysup | xargs sudo kill -9 # Podría omitirse el sudo en caso de que el usuario sea root
 ```
 
+Para detener el contenedor, otra forma es la siguiente:
+```sh
+docker stop alwaysup
+```
+
+Si quisiese borrarlo aún estando en ejecución:
+
+```sh
+docker rm -f alwaysup
+```
+
 Entonces ahora `docker ps -a` nos informará que el container se ha detenido
 
 # Exponiendo contenedores
+
+Por ejemplo si usamos el container de nginx:
+
+```sh
+docker run -d --name proxy nginx
+docker ps -a # Está escuchando en el puerto 80 del CONTENEDOR
+```
+
+Por defecto nginx escucha en el puerto 80 del contenedor, esto no implica que pueda acceder a él desde el exterior.
+Para mapear ese puerto a algún puerto de nuestra PC podemos hacer lo siguiente:
+
+```sh
+docker stop proxy
+docker run -d --name proxy -p 8080:80 nginx
+docker ps -a # Está escuchando en el puerto 80 del contenedor pero en el puerto 8080 de nuestra PC
+```
+
+Y luego podemos entrar a http://localhost:8080
+
+# Logs
+
+Para poder ver los logs de un contenedor:
+
+```sh
+docker logs <container_name>
+```
+
+Para poder ver los logs de un contenedor en tiempo real:
+
+```sh
+docker logs -f <container_name>
+```
+
+Para ver los logs en tiempo real limitando a las últimas 10:
+
+```sh
+docker logs -f --tail 10 <container_name>
+```
+
+# Trabajando con Datos
+
+Los procesos de los contenedores por defecto no pueden acceder al file system del host. Pero a veces podemos necesitar que accedan a ellos por distintos motivos, por ejemplo para persistirlos.
+
+Por ejemplo si trabajamos con mongodb
+
+```sh
+docker pull -d --name db mongo:4.4.12-rc0-focal # #lijo esta por ser más liviano
+```
+Vamos a insertar algunos datos:
+
+```sh	
+docker exec -it db bash
+mongo # Ejecuto el cliente de DB
+show dbs
+db.users.insert({"name":"swaxtech"}) # Insertamos un dato para crear la db
+db.users.find() # Nos devuelve el usuario insertado
+# CTRL + C
+docker stop db
+docker rm -f db
+docker run -d --name db mongo:4.4.12-rc0-focal
+docker exec -it db bash
+mongo # Ejecuto el cliente de DB
+db.users.find() ## No devuelve nada
+```
+
+Queremos tener un directorio en el host que refleje aquello que pasa en el contenedor.
+
+## Bind Mounts
+
+Para poder hacer un bind mount sobre un directorio:
+
+```sh	
+mkdir mongodata
+pwd ## Nos dice el directorio actual
+docker run -d --name db -v /home/alee/mongodata:/data/db mongo:4.4.12-rc0-focal
+```
+
+Si no ponemos el path completo el bind mount será en `/var/lib/docker/volumes/mongodata`
+
+Cada cambio hecho en el directorio montado del contenedor se verá reflejado en el directorio especificado del host
+
+El problema que tiene esto es que le estamos dando acceso a docker a una parte de nuestro file system y no sabemos qué puede tener ese contenedor en su interior. Por lo tanto, Docker nos ofrece otras formas más seguras de manejar esto.
+
+## Volúmenes
+
+Es una evolución más segura de los bind mounts. La parte del disco que le entregamos como volumen es manejada íntegramente por docker y no tenemos acceso a menos que seamos usuarios privilegiados.
+
+Para listas los volúmenes que Docker se encuentra manejando:
+
+```sh
+docker volume ls
+```
+
+Para crear un volumen:
+
+```sh
+docker volume create dbdata # Sino se crea con el siguiente comando
+```
+
+Creamos el contenedor con este volumen:
+
+```sh
+docker run -d --name db --mount src=dbdata,dst=/data/db mongo:4.4.12-rc0-focal
+```
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
