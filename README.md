@@ -327,32 +327,156 @@ Creamos el contenedor con este volumen:
 docker run -d --name db --mount src=dbdata,dst=/data/db mongo:4.4.12-rc0-focal
 ```
 
+## Tmpfs mount
+
+Todos los archivos creados en tmpfs mount no tendrán ningun tipo de persistencia en el disco.
+
+# Manejo de Archivos
+
+Creamos un archivo para insertar en el contenedor:
+
+```sh	
+touch test.txt
+docker run -d --name copytest ubuntu tail -f /dev/null
+docker exec -it copytest bash
+mkdir testing
+exit
+
+# Para copiar el archivo
+docker cp test.txt copytest:/testing/test.txt
+docker exec -it copytest ls
+```
+
+Para recuperar el archivo (también funciona para directorios):
+
+```sh
+docker cp copytest:testing/ testingcopied
+```
+
+Nota: No hace falta que el contenedor esté corriendo para copiar archivos.
 
 
+# Imágenes
+
+Vienen a solucionar los problemas de construcción y distribución del software
+Son plantillas/moldes en los que docker crea contenedores.
+Contiene todo lo necesario para que un contenedor pueda ejecutarse.
+
+```sh
+docker image ls ## Listar imágenes
+```
+
+Vemos que tienen distintos tamaños, y pueden tener distintos tags, por defecto latest.
+
+Cada imagen se compone de distintas capas, dotandolo de mayor eficiencia.
+
+Las imágenes se descargan de hub.docker.com
+
+Para descargar una imagen de dockerhub (o algún repositorio distinto):
+
+```sh	
+docker pull ubuntu:20.04 # O la última
+```
+
+Al listar las imágenes vamos a ver dos casos de ubuntu:
+
+```sh
+docker image ls
+```
+
+```
+ubuntu                20.04              ba6acccedd29   2 months ago   72.8MB
+ubuntu                latest             ba6acccedd29   2 months ago   72.8MB
+```
+Ambos IMAGE_ID coinciden, ambas imágenes son el mismo archivo.
+Como 20.04 es la última, latest apunta a esa versión.
+
+# Creando nuestra propia Imagen
+
+Para crear nuestras imágenes vamos a necesitar un archivo Dockerfile.
+
+```sh
+vim Dockerfile
+```
+
+```Dockerfile
+FROM ubuntu:latest
+
+RUN touch /usr/src/hello-world.txt
+```
+
+En este archivo especificamos que como base, usaremos la última versión disponible de ubuntu. Y en tiempo de *build*, se ejecutará el comando que escribimos en RUN.
+
+Para construir la imagen:
+
+```sh
+docker build -t ubuntu:hello-world .
+```
+
+Hay 2 pasos en este build. Setear la imagen base, y correr el comando.
+Cada paso tiene asociado un ID. Es decir, cada paso se encuentra asociada a una CAPA.
+Cada instrucción genera una nueva layer.
+Y cada layer es una *diferencia* con la capa anterior. Con lo que se va formando un arbol de dependencias.
+
+Para crear un nuevo contenedor a partir de esta imagen:
+
+```sh
+docker run -it ubuntu:hello-world ls /usr/src/
+```
+
+Para publicar esta imagen en dockerhub
+
+```sh
+docker login
+docker tag ubuntu:hello-world swaxtech/ubuntu:hello-world
+docker push swaxtech/ubuntu:hello-world
+```
+
+En este momento tenemos dos tags:
+
+-> ubuntu:hello-world
+-> swaxtech/ubuntu:hello-world
+
+Ambas apuntan a la misma imagen, cuya última capa corresponde al step de `RUN touch ...`
+
+Al pushear vemos que únicamente subió una de las capas, es decir la última. El resto de las capas ya existen en dockerhub.
+
+# El sistema de Capas
+
+Como vimos antes, docker genera un sistema de capas como un árbol de dependencias, en donde cada capa guarda la diferencia con la capa anterior. Para ver discriminada cada una de las capas:
+
+```sh
+docker history ubuntu:hello-world
+```
+
+Otra manera para ver cómo está construida una imagen de docker, se puede usar [dive](https://github.com/wagoodman/dive)
+
+Corriendo el siguiente comando:
+
+```
+dive ubuntu:hello-world
+```
+
+Si al Dockerfile creado recién agregamos la siguiente línea:
 
 
+```Dockerfile
+FROM ubuntu:latest
 
+RUN touch /usr/src/hello-world.txt
 
+RUN rm /usr/src/hello-world.txt
+```
 
+Al buildear esta imagen, hay una nueva capa basada en la anterior que lo que hace es borrar el archivo creado, es decir, hace un uso ineficiente del sistema de capas. Esto es frecuente al momento de instalar ciertas dependencias, que es necesario borrar algunos archivos luego.
 
+Si se van a crear archivos que luego deben ser borrados, es conveniente realizar todo en la misma operación, para que solo ocupe una única capa.
 
+Tener en cuenta que las capas son inmutables, para asegurar que es completamente reutilizable.
 
+Cada vez que un contenedor se ejecuta se crea una nueva capa mutable, cuyas diferencias (es decir, archivos creados, etc) pueden rescatarse con las herramientas vistas antes.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+Para persistir esta última capa se puede usar el comando `docker commit`
 
 
 
