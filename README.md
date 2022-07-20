@@ -13,9 +13,6 @@ Sobre Docker se trabaja sobre principalmente 4 entidades:
 - Volúmenes: Es la forma en la que Docker nos permite acceder con seguridad al File System de la máquina anfitriona.
 - Network: Permite a los contenedores comunicarse entre sí y con el mundo exterior.
 
-
-
-
 # Comandos básicos
 
 ## Versión de docker
@@ -27,7 +24,6 @@ docker --version
 ```sh
 docker info
 ```
-
 
 ## Hello World
 
@@ -103,6 +99,7 @@ docker run -it --name <nombre> hello-world
 Si se utiliza otra vez el comando anterior, daría error, porque no permite que haya dos contenedores en el sistema con el mismo nombre.
 
 ## Renombrando un contenedor
+
 ```sh
 docker rename <old> <new>
 ```
@@ -268,7 +265,7 @@ Los procesos de los contenedores por defecto no pueden acceder al file system de
 Por ejemplo si trabajamos con mongodb
 
 ```sh
-docker pull -d --name db mongo:4.4.12-rc0-focal # #lijo esta por ser más liviano
+docker pull -d --name db mongo:4.4.12-rc0-focal # elijo esta por ser más liviano
 ```
 Vamos a insertar algunos datos:
 
@@ -353,7 +350,7 @@ Para recuperar el archivo (también funciona para directorios):
 docker cp copytest:testing/ testingcopied
 ```
 
-Nota: No hace falta que el contenedor esté corriendo para copiar archivos.
+> Nota: No hace falta que el contenedor esté corriendo para copiar archivos.
 
 
 # Imágenes
@@ -434,7 +431,7 @@ docker push swaxtech/ubuntu:hello-world
 
 En este momento tenemos dos tags:
 
--> ubuntu:hello-world
+-> ubuntu:hello-world </br>
 -> swaxtech/ubuntu:hello-world
 
 Ambas apuntan a la misma imagen, cuya última capa corresponde al step de `RUN touch ...`
@@ -477,6 +474,429 @@ Tener en cuenta que las capas son inmutables, para asegurar que es completamente
 Cada vez que un contenedor se ejecuta se crea una nueva capa mutable, cuyas diferencias (es decir, archivos creados, etc) pueden rescatarse con las herramientas vistas antes.
 
 Para persistir esta última capa se puede usar el comando `docker commit`
+
+
+# Desarrollando Aplicaciones con Docker
+
+Ejemplo de aplicación en node:
+
+```Dockerfile
+FROM node:12
+
+COPY [".", "/usr/src/"]
+
+WORKDIR /usr/src/
+
+RUN npm install
+
+EXPOSE 3000
+
+CMD ["node", "index.js"]
+
+```
+
+El comando de `CMD` es el que se ejecuta al iniciar el contenedor.
+
+Para construir la imagen:
+
+```sh
+docker build -t mynodeapp .
+```
+
+Y para correr el contenedor:
+
+```sh
+docker run -rm -p 3000:3000 mynodeapp
+```
+
+El flag `-rm` es para que el contenedor se destruya al terminar. </br>
+El puerto 3000 de mi pc se bindea al puerto 3000 del contenedor.
+
+## Aprovechando el caché de capas
+
+Para agilizar el trabajo, docker cachea las capas que ya se han construido. Al buildear nuevamente la imagen, no se construye nuevamente la capa, sino que se usa la que ya existe en el caché.
+Pero al cambiar la versión de node, toda la caché se invalida.
+Lo mismo si cambiamos alguna línea de código.
+
+Ésta es una versión más optimizada del Dockerfile:
+
+```Dockerfile
+FROM node:14
+
+COPY ["package.json", "package-lock.json", "/usr/src/"]
+
+WORKDIR /usr/src/
+
+RUN npm install
+
+COPY [".", "/usr/src/"]
+
+EXPOSE 3000
+
+CMD ["node", "index.js"]
+
+```
+
+Es interesante saber que el segundo copy no sobreescribe los .json que se copiaron antes.
+
+Si quisiésemos NO buildear ante cada cambio de código, en lugar de copiar los archivos, compartimos ese cacho de file system con el contenedor, y le avisamos a node de la siguiente manera:
+
+Entre las dependencias de node, agregamos nodemon, y el command queda así:
+
+```Dockerfile
+FROM node:14
+
+COPY ["package.json", "package-lock.json", "/usr/src/"]
+
+WORKDIR /usr/src/
+
+RUN npm install
+
+COPY [".", "/usr/src/"]
+
+EXPOSE 3000
+
+CMD ["npx", "nodemon", "index.js"]
+```
+
+Y ejecutamos el contenedor de la siguiente manera:
+
+```sh
+docker run --rm -p 3000:3000 -v /home/user/myapp:/usr/src/ mynodeapp
+```
+
+En este momento, el volumen sobreescribe en su capa mutable, la capa en la que se instalaron las dependencias, para solucionar eso, hacemos lo siguiente:
+
+```sh
+docker run --rm -p 3000:3000 -v /home/user/myapp/index.js:/usr/src/index.js mynodeapp # Únicamente montamos el index!
+```
+
+Si bien es poco práctico, esto lo solucionamos más adelante.
+
+# Docker Networking
+
+Necesitamos que los programas que corren en distintos contenedores puedan conocerse, para ello se pueden crear redes entre los contenedores.
+
+Docker ya viene con algunas networks creadas:
+
+```sh
+docker network ls
+```
+
+- bridge -> Está únicamente por retrocompatibilidad
+- host -> Permite que los contenedores se conecten a través de la misma red/interfaz del host.
+- none -> Para que el contenedor no tenga acceso a ninguna red, ni internet.
+
+Podemos crear nuestras propias networks
+
+```sh
+docker network create --attachable mynetwork
+```
+
+Y podremos ver todos sus detalles mediante el comando:
+
+```sh
+docker network inspect mynetwork
+```
+
+Para conectar nuestro container con el programa de node, y el contenedor con el mongo:
+
+```sh
+docker network connect mynetwork mynodeapp
+docker network connect mynetwork db
+```
+
+Para luego poder iniciar la app de node de la siguiente manera:
+
+```sh
+docker run --rm -p 3000:3000 -e MONGODB_URI=mongodb://db:27017/mydb mynodeapp
+```
+
+Ahora el contenedor de node conoce a mongo como "db" y podemos utilizarlo en la uri de mongodb.
+
+# Docker Compose
+
+Para poder realizar todas las operaciones anteriores en conjunto, en lugar de escribir un comando con todas las opciones, puede crearse un archivo de configuración de docker-compose.
+
+   
+```yaml
+version: "3.8" ## Versión del compose file. Obligatorio aclararla.
+
+services: ## Son los servicios que componen la aplicación.
+   app: ## Implica no sólamente un contenedor, sino que cada servicio puede tener varios contenedores.
+      image: mynodeapp 
+      ports:
+         - "3000:3000"
+      environment:
+         - MONGODB_URI=mongodb://db:27017/mydb
+      depends_on:
+         - db
+      ports:
+         - "3000:3000"
+
+   db:
+      image: mongo
+```
+
+Además por defecto va a crear una network que interconecte ambos contenedores. Y se pueden comunicar utilizando el nombre del servicio.
+
+
+## Subcomandos del Docker Compose
+
+```sh
+docker-compose up # Construye e inicia todos los contenedores.
+docker-compose down # Destruye todos los contenedores.
+docker-compose logs # Muestra los logs de todos los contenedores.
+docker-compose logs app # Muestra los logs del contenedor app.
+docker-compose logs -f app # Muestra los logs del contenedor app haciendo follow.
+docker-compose logs -f app db # Muestra los logs del contenedor app y db haciendo follow.
+docker-compose exec app bash # Ejecuta un shell en el contenedor app. No hizo falta poner -it.
+```
+
+## Desarrollando con Docker Compose
+
+En lugar de que utilice una imagen de docker, podemos decirle que contruya la imagen con el Dockerfile creado antes:
+
+      
+```yaml
+services:
+   app:
+      build: .
+      ports:
+         - "3000:3000"
+      environment:
+         - MONGODB_URI=mongodb://db:27017/mydb
+      depends_on:
+         - db
+      ports:
+         - "3000:3000"
+   db:
+      image: mongo
+```
+
+Luego para que tome los cambios del código:
+
+```yaml
+services:
+   app:
+      build: .
+      ports:
+         - "3000:3000"
+      environment:
+         - MONGODB_URI=mongodb://db:27017/mydb
+      depends_on:
+         - db
+      volumes:
+         - .:/usr/src/ # Agregamos el volumen con la carpeta actual
+         - /usr/src/node_modules # Le decimos que NO pise esta carpeta.
+      command: npx nodemon index.js # Overrideamos el comando que se ejecuta en el contenedor.
+      ports:
+         - "3000:3000"
+   db:
+      image: mongo
+```
+
+## Compose Override
+
+Para poder usar compose colaborativamente, si no queremos que ciertos cambios queden versionados, podemos crear un archivo aparte que sobreescriben cierta parte del archivo de compose file:
+
+```sh
+touch docker-compose.override.yml
+```
+
+```yaml
+version: "3.8"
+
+services:
+   app:
+      environment:
+         - MONGODB_URI=mongodb://db:27017/mydb
+      volumes:
+         - .:/usr/src/ # Agregamos el volumen con la carpeta actual
+         - /usr/src/node_modules # Le decimos que NO pise esta carpeta.
+      command: npx nodemon index.js # Overrideamos el comando que se ejecuta en el contenedor.
+```
+Y ponemos en este archivo todos los parámetros que son particulares del desarrollo local.
+
+> Nota: No es aconsejable usar ports en el override, a menos que se especifique únicamente allí.
+
+# Escalando Contenedores
+
+Puedo querer tener 2 instancias de mi contenedor:
+
+```sh
+docker-compose up -d --scale app=2
+```
+
+Por cómo venimos trabajando esto fallaría, pero podemos especificar en el mapeo de puertos un rango que pueda tomar:
+
+```yaml
+services:
+   app:
+      build: .
+      ports:
+         - "3000:3000"
+      environment:
+         - MONGODB_URI=mongodb://db:27017/mydb
+      depends_on:
+         - db
+      volumes:
+         - .:/usr/src/ # Agregamos el volumen con la carpeta actual
+         - /usr/src/node_modules # Le decimos que NO pise esta carpeta.
+      command: npx nodemon index.js # Overrideamos el comando que se ejecuta en el contenedor.
+      ports:
+         - "3000-3001:3000"
+   db:
+      image: mongo
+```
+Esto creará 3 contenedores, 2 apps escuchando en el 3000 y 3001 respectivamente y un mongo. Esto luego requerirá de un load balancer configurado.
+
+# Administrando el Ambiente de Docker
+
+
+## Borrar lo que ya no usamos
+
+```sh
+docker container prune # Borra todos los contenedores frenados
+docker rm -f ${docker ps -aq} # Borra todos los contenedores, aunque estén activos.
+docker network prune # Borra todas las redes creadas.
+docker volume prune # Borra todos los volúmenes creados.
+docker system prune # Borra todos los contenedores, redes y volúmenes creados.
+```
+
+
+## Limitar recursos
+
+```sh
+docker stats ## Nos dice cuánto está consumiendo cada contenedor
+docker run -d --name mynodeapp --memory 512m -p 3000:3000 mynodeapp
+```
+
+## Matando contenedores
+
+Por defecto docker enviará **SIGTERM** al proceso para stoppear los contenedores.
+Si el contenedor no responde en un cierto tiempo enviará un **SIGKILL**
+
+Si al hacer `docker ps` vemos que el código de salida es mayor a 128, es porque hubo problemas al manejar la señal de SIGTERM.
+Por ejemplo si tuvimos un 137, (137 - 128 = 9) => 9 => El contenedor se frenó por un SIGKILL
+
+Si quiero que directamente envíe un SIGKILL puedo utilizar:
+
+```sh
+docker kill <name/id_contenedor>
+```
+Pero esto evita un graceful shutdown.
+
+Hay que tener en cuenta una cosa:
+
+### Exec Form vs Shell Form
+
+Supongamos que como proceso principal tengo un script que atrapa la señal de SIGTERM.
+
+script.sh
+```sh
+#!/usr/bin/env bash
+trap 'exit 0' SIGTERM
+while true; do:; done
+```
+
+El proceso con PID 1 será
+
+```sh
+/bin/sh -c /script.sh
+```
+
+Pero habrá otro proceso:
+
+```sh
+bash /script.sh
+```
+
+Y el problema es que /bin/sh no reenvia la señal a sus procesos hijos.
+
+Esto sucede únicamente si ese script está puesto de la siguiente manera en el Dockerfile:
+
+```Dockerfile
+FROM ubuntu
+COPY script.sh /script.sh
+CMD /script.sh 
+```
+
+Esta forma de ejecutar comandos se lo llama **shell form**, y lo corre como hijo del shell.
+Conviene entonces utilizar la forma **exec form**
+
+```Dockerfile
+FROM ubuntu
+COPY script.sh /script.sh
+CMD ["/script.sh"]
+```
+
+### EntryPoint vs CMD
+
+```Dockerfile
+FROM ubuntu:trusty
+CMD ["/bin/ping", "-c", "3", "localhost"]
+```
+
+Esto al ejecutarlo realiza 3 pings hacia si mismo.
+
+Podría querer que ese ping pueda utilizarlo para pingear otros hosts, utilizando un ENTRYPOINT.
+
+Un ENTRYPOINT es un comando que se va a ejecutar siempre, y utilizará el CMD como parámetro del ENTRYPOINT.
+
+   
+```Dockerfile
+FROM ubuntu:trusty
+ENTRYPOINT ["/bin/ping", "-c", "3"]
+CMD ["localhost"]
+```
+Y puedo ejecutar lo siguiente:
+
+```sh
+docker build -t ping .
+docker run --name pinger ping google.com
+```
+
+Utilizará el entrypoing pero utilizando google.com en lugar de localhost.
+
+# Multi-stage build
+
+Puedo utilizar multi-stage builds para distintos contextos, por ejemplo:
+
+production.Dockerfile:
+```Dockerfile
+FROM node:12 as builder
+COPY ["package.json", "package-lock.json", "/usr/src"] 
+WORKDIR /usr/src
+RUN npm install --only=production
+COPY [".", "/usr/src"]
+RUN npm install --only=development ## Únicamente para reutilizar las capas!
+RUN npm run test
+
+## Productive image
+FROM node:12
+COPY ["package.json", "package-lock.json", "/usr/src"]
+WORKDIR /usr/src
+RUN npm install --only=production ## Hasta acá utiliza el caché
+COPY --from=builder ["/usr/src/index.js", "/usr/src"]
+EXPOSE 3000
+CMD ["node", "index.js"]
+```
+
+```sh
+docker build -t prodapp -f production.Dockerfile .
+```
+
+
+
+
+
+
+
+
+
+
+
 
 
 
